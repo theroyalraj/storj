@@ -21,7 +21,7 @@ func GenerateKey(ctx context.Context, minDifficulty uint16) (
 		if err != nil {
 			break
 		}
-		k, err = peertls.NewKey()
+		k, err = peertls.GeneratePrivateKey()
 		if err != nil {
 			break
 		}

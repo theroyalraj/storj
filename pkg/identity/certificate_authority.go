@@ -334,7 +334,7 @@ func (ca *FullCertificateAuthority) NewIdentity() (*FullIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
-	leafKey, err := peertls.NewKey()
+	leafKey, err := peertls.GeneratePrivateKey()
 	if err != nil {
 		return nil, err
 	}

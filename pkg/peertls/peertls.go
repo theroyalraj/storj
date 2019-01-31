@@ -56,11 +56,6 @@ var (
 // `VerifyPeerCertificate` function.
 type PeerCertVerificationFunc func([][]byte, [][]*x509.Certificate) error
 
-// NewKey returns a new PrivateKey
-func NewKey() (*ecdsa.PrivateKey, error) {
-	return ecdsa.GenerateKey(authECCurve, rand.Reader)
-}
-
 // VerifyPeerFunc combines multiple `*tls.Config#VerifyPeerCertificate`
 // functions and adds certificate parsing.
 func VerifyPeerFunc(next ...PeerCertVerificationFunc) PeerCertVerificationFunc {
@@ -168,36 +163,6 @@ func WriteChain(w io.Writer, chain ...*x509.Certificate) error {
 func ChainBytes(chain ...*x509.Certificate) ([]byte, error) {
 	var data bytes.Buffer
 	err := WriteChain(&data, chain...)
-	return data.Bytes(), err
-}
-
-// WriteKey writes the private key to the writer, PEM-encoded.
-func WriteKey(w io.Writer, key crypto.PrivateKey) error {
-	var (
-		kb  []byte
-		err error
-	)
-
-	switch k := key.(type) {
-	case *ecdsa.PrivateKey:
-		kb, err = x509.MarshalECPrivateKey(k)
-		if err != nil {
-			return errs.Wrap(err)
-		}
-	default:
-		return ErrUnsupportedKey.New("%T", k)
-	}
-
-	if err := pem.Encode(w, NewKeyBlock(kb)); err != nil {
-		return errs.Wrap(err)
-	}
-	return nil
-}
-
-// KeyBytes returns bytes of the private key to the writer, PEM-encoded.
-func KeyBytes(key crypto.PrivateKey) ([]byte, error) {
-	var data bytes.Buffer
-	err := WriteKey(&data, key)
 	return data.Bytes(), err
 }
 
