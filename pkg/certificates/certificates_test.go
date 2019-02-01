@@ -236,7 +236,7 @@ func TestAuthorizationDB_Claim_Valid(t *testing.T) {
 		Addr: addr,
 		AuthInfo: credentials.TLSInfo{
 			State: tls.ConnectionState{
-				PeerCertificates: []*x509.Certificate{ident.Leaf, ident.CA},
+				PeerCertificates: []*x509.Certificate{ident.Leaf.Certificate, ident.CA.Certificate},
 			},
 		},
 	}
@@ -334,7 +334,7 @@ func TestAuthorizationDB_Claim_Invalid(t *testing.T) {
 		Addr: addr,
 		AuthInfo: credentials.TLSInfo{
 			State: tls.ConnectionState{
-				PeerCertificates: []*x509.Certificate{ident2.Leaf, ident2.CA},
+				PeerCertificates: []*x509.Certificate{ident2.Leaf.Certificate, ident2.CA.Certificate},
 			},
 		},
 	}
@@ -729,7 +729,7 @@ func TestCertificateSigner_Sign_E2E(t *testing.T) {
 	// TODO: test scenario with rest chain
 	//assert.Equal(t, signingCA.RestChainRaw(), signedChainBytes[1:])
 
-	err = signedChain[0].CheckSignatureFrom(signingCA.Cert)
+	err = signedChain[0].CheckSignatureFrom(signingCA.Cert.Certificate)
 	assert.NoError(t, err)
 
 	err = service.Close()
@@ -865,7 +865,7 @@ func TestCertificateSigner_Sign(t *testing.T) {
 		Addr: expectedAddr,
 		AuthInfo: credentials.TLSInfo{
 			State: tls.ConnectionState{
-				PeerCertificates: []*x509.Certificate{clientIdent.Leaf, clientIdent.CA},
+				PeerCertificates: []*x509.Certificate{clientIdent.Leaf.Certificate, clientIdent.CA.Certificate},
 			},
 		},
 	}
@@ -896,7 +896,7 @@ func TestCertificateSigner_Sign(t *testing.T) {
 	// TODO: test scenario with rest chain
 	//assert.Equal(t, signingCA.RestChainRaw(), res.Chain[1:])
 
-	err = signedChain[0].CheckSignatureFrom(signingCA.Cert)
+	err = signedChain[0].CheckSignatureFrom(signingCA.Cert.Certificate)
 	assert.NoError(t, err)
 
 	updatedAuths, err := authDB.Get(userID)

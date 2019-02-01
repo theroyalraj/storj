@@ -4,7 +4,6 @@
 package testpeertls
 
 import (
-	"crypto"
 	"crypto/x509"
 
 	"storj.io/storj/pkg/peertls"
@@ -12,9 +11,9 @@ import (
 
 // NewCertChain creates a valid peertls certificate chain (and respective keys) of the desired length.
 // NB: keys are in the reverse order compared to certs (i.e. first key belongs to last cert)!
-func NewCertChain(length int) (keys []crypto.PrivateKey, certs []*x509.Certificate, _ error) {
+func NewCertChain(length int) (keys []peertls.PrivateKey, certs []*peertls.Certificate, _ error) {
 	for i := 0; i < length; i++ {
-		key, err := peertls.NewKey()
+		key, err := peertls.GeneratePrivateKey()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -30,17 +29,17 @@ func NewCertChain(length int) (keys []crypto.PrivateKey, certs []*x509.Certifica
 			return nil, nil, err
 		}
 
-		var cert *x509.Certificate
+		var cert *peertls.Certificate
 		if i == 0 {
-			cert, err = peertls.NewCert(key, nil, template, nil)
+			cert, err = peertls.CreateSelfSignedCertificate(key, template)
 		} else {
-			cert, err = peertls.NewCert(key, keys[i-1], template, certs[i-1:][0])
+			cert, err = peertls.CreateCertificate(key.PubKey(), keys[i-1], template, certs[i-1:][0].Certificate)
 		}
 		if err != nil {
 			return nil, nil, err
 		}
 
-		certs = append([]*x509.Certificate{cert}, certs...)
+		certs = append([]*peertls.Certificate{cert}, certs...)
 	}
 	return keys, certs, nil
 }

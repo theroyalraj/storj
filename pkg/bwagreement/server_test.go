@@ -27,6 +27,7 @@ import (
 	"storj.io/storj/pkg/bwagreement/testbwagreement"
 	"storj.io/storj/pkg/identity"
 	"storj.io/storj/pkg/pb"
+	"storj.io/storj/pkg/peertls"
 	"storj.io/storj/pkg/storj"
 	"storj.io/storj/satellite"
 	"storj.io/storj/satellite/satellitedb/satellitedbtest"
@@ -50,11 +51,11 @@ func getPeerContext(ctx context.Context, t *testing.T) (context.Context, storj.N
 		Addr: &net.TCPAddr{IP: net.ParseIP("1.2.3.4"), Port: 5},
 		AuthInfo: credentials.TLSInfo{
 			State: tls.ConnectionState{
-				PeerCertificates: []*x509.Certificate{ident.Leaf, ident.CA},
+				PeerCertificates: []*x509.Certificate{ident.Leaf.Certificate, ident.CA.Certificate},
 			},
 		},
 	}
-	nodeID, err := identity.NodeIDFromKey(ident.CA.PublicKey)
+	nodeID, err := identity.NodeIDFromKey(ident.CA.PubKey())
 	assert.NoError(t, err)
 	return peer.NewContext(ctx, grpcPeer), nodeID
 }
@@ -184,8 +185,7 @@ func testDatabase(ctx context.Context, t *testing.T, bwdb bwagreement.DB) {
 		manipID, err := testidentity.NewTestIdentity(ctx)
 		assert.NoError(t, err)
 		manipCerts := manipID.ChainRaw()
-		manipPrivKey, ok := manipID.Key.(*ecdsa.PrivateKey)
-		assert.True(t, ok)
+		manipPrivKey := manipID.Key
 
 		/* Storage node can't manipulate the bwagreement size (or any other field)
 		   Satellite will verify Renter's Signature. */
@@ -315,7 +315,7 @@ func callBWA(ctx context.Context, t *testing.T, sat *bwagreement.Server, signatu
 }
 
 //GetSignature returns the signature of the signed message
-func GetSignature(t *testing.T, msg auth.SignableMessage, privECDSA *ecdsa.PrivateKey) []byte {
+func GetSignature(t *testing.T, msg auth.SignableMessage, privKey peertls.PrivateKey) []byte {
 	require.NotNil(t, msg)
 	oldSignature := msg.GetSignature()
 	certs := msg.GetCerts()
@@ -323,7 +323,7 @@ func GetSignature(t *testing.T, msg auth.SignableMessage, privECDSA *ecdsa.Priva
 	msg.SetCerts(nil)
 	msgBytes, err := proto.Marshal(msg)
 	require.NoError(t, err)
-	signature, err := cryptopasta.Sign(msgBytes, privECDSA)
+	signature, err := cryptopasta.Sign(msgBytes, privKey.CryptoPrivate().(*ecdsa.PrivateKey))
 	require.NoError(t, err)
 	msg.SetSignature(oldSignature)
 	msg.SetCerts(certs)

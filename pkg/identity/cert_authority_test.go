@@ -48,7 +48,7 @@ func TestFullCertificateAuthority_NewIdentity(t *testing.T) {
 	assert.NotEqual(t, ca.Key, fi.Key)
 	assert.NotEqual(t, ca.Cert, fi.Leaf)
 
-	err = fi.Leaf.CheckSignatureFrom(ca.Cert)
+	err = fi.Leaf.CheckSignatureFrom(ca.Cert.Certificate)
 	assert.NoError(t, err)
 }
 
@@ -78,7 +78,7 @@ func TestFullCertificateAuthority_Sign(t *testing.T) {
 	assert.NotEqual(t, toSign.Cert.Signature, signed.Signature)
 	assert.NotEqual(t, toSign.Cert.Raw, signed.Raw)
 
-	err = signed.CheckSignatureFrom(ca.Cert)
+	err = signed.CheckSignatureFrom(ca.Cert.Certificate)
 	assert.NoError(t, err)
 }
 

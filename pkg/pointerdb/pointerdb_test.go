@@ -74,8 +74,8 @@ func TestServiceGet(t *testing.T) {
 	assert.NoError(t, err)
 
 	peerCertificates := make([]*x509.Certificate, 2)
-	peerCertificates[0] = identity.Leaf
-	peerCertificates[1] = identity.CA
+	peerCertificates[0] = identity.Leaf.Certificate
+	peerCertificates[1] = identity.CA.Certificate
 
 	info := credentials.TLSInfo{State: tls.ConnectionState{PeerCertificates: peerCertificates}}
 

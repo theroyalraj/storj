@@ -5,10 +5,8 @@ package peertls_test
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
-	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/gob"
@@ -27,49 +25,49 @@ import (
 )
 
 func TestNewCert_CA(t *testing.T) {
-	caKey, err := peertls.NewKey()
+	caKey, err := peertls.GeneratePrivateKey()
 	assert.NoError(t, err)
 
 	caTemplate, err := peertls.CATemplate()
 	assert.NoError(t, err)
 
-	caCert, err := peertls.NewCert(caKey, nil, caTemplate, nil)
+	caCert, err := peertls.CreateCertificate(caKey.PubKey(), nil, caTemplate, nil)
 	assert.NoError(t, err)
 
 	assert.NotEmpty(t, caKey)
 	assert.NotEmpty(t, caCert)
 	assert.NotEmpty(t, caCert.PublicKey.(*ecdsa.PublicKey))
 
-	err = caCert.CheckSignatureFrom(caCert)
+	err = caCert.CheckSignatureFrom(caCert.Certificate)
 	assert.NoError(t, err)
 }
 
 func TestNewCert_Leaf(t *testing.T) {
-	caKey, err := peertls.NewKey()
+	caKey, err := peertls.GeneratePrivateKey()
 	assert.NoError(t, err)
 
 	caTemplate, err := peertls.CATemplate()
 	assert.NoError(t, err)
 
-	caCert, err := peertls.NewCert(caKey, nil, caTemplate, nil)
+	caCert, err := peertls.CreateCertificate(caKey.PubKey(), nil, caTemplate, nil)
 	assert.NoError(t, err)
 
-	leafKey, err := peertls.NewKey()
+	leafKey, err := peertls.GeneratePrivateKey()
 	assert.NoError(t, err)
 
 	leafTemplate, err := peertls.LeafTemplate()
 	assert.NoError(t, err)
 
-	leafCert, err := peertls.NewCert(leafKey, caKey, leafTemplate, caCert)
+	leafCert, err := peertls.CreateCertificate(leafKey.PubKey(), caKey, leafTemplate, caCert.Certificate)
 	assert.NoError(t, err)
 
 	assert.NotEmpty(t, caKey)
 	assert.NotEmpty(t, leafCert)
 	assert.NotEmpty(t, leafCert.PublicKey.(*ecdsa.PublicKey))
 
-	err = caCert.CheckSignatureFrom(caCert)
+	err = caCert.CheckSignatureFrom(caCert.Certificate)
 	assert.NoError(t, err)
-	err = leafCert.CheckSignatureFrom(caCert)
+	err = leafCert.CheckSignatureFrom(caCert.Certificate)
 	assert.NoError(t, err)
 }
 
@@ -80,7 +78,7 @@ func TestVerifyPeerFunc(t *testing.T) {
 	}
 	leafCert, caCert := chain[0], chain[1]
 
-	testFunc := func(chain [][]byte, parsedChains [][]*x509.Certificate) error {
+	testFunc := func(chain [][]byte, parsedChains [][]*peertls.Certificate) error {
 		switch {
 		case !bytes.Equal(chain[1], caCert.Raw):
 			return errs.New("CA cert doesn't match")
@@ -114,10 +112,10 @@ func TestVerifyPeerCertChains(t *testing.T) {
 	err = peertls.VerifyPeerFunc(peertls.VerifyPeerCertChains)([][]byte{leafCert.Raw, caCert.Raw}, nil)
 	assert.NoError(t, err)
 
-	wrongKey, err := peertls.NewKey()
+	wrongKey, err := peertls.GeneratePrivateKey()
 	assert.NoError(t, err)
 
-	leafCert, err = peertls.NewCert(leafKey, wrongKey, leafCert, caCert)
+	leafCert, err = peertls.CreateCertificate(leafKey.PubKey(), wrongKey, leafCert.Certificate, caCert.Certificate)
 	assert.NoError(t, err)
 
 	err = peertls.VerifyPeerFunc(peertls.VerifyPeerCertChains)([][]byte{leafCert.Raw, caCert.Raw}, nil)
@@ -138,7 +136,7 @@ func TestVerifyCAWhitelist(t *testing.T) {
 	})
 
 	t.Run("whitelist contains ca", func(t *testing.T) {
-		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*x509.Certificate{caCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
+		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*peertls.Certificate{caCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
 		assert.NoError(t, err)
 	})
 
@@ -149,17 +147,17 @@ func TestVerifyCAWhitelist(t *testing.T) {
 	unrelatedCert := unrelatedChain[0]
 
 	t.Run("no valid signed extension, non-empty whitelist", func(t *testing.T) {
-		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*x509.Certificate{unrelatedCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
+		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*peertls.Certificate{unrelatedCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
 		assert.True(t, peertls.ErrVerifyCAWhitelist.Has(err))
 	})
 
 	t.Run("last cert in whitelist is signer", func(t *testing.T) {
-		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*x509.Certificate{unrelatedCert, caCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
+		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*peertls.Certificate{unrelatedCert, caCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
 		assert.NoError(t, err)
 	})
 
 	t.Run("first cert in whitelist is signer", func(t *testing.T) {
-		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*x509.Certificate{caCert, unrelatedCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
+		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*peertls.Certificate{caCert, unrelatedCert}))([][]byte{leafCert.Raw, caCert.Raw}, nil)
 		assert.NoError(t, err)
 	})
 
@@ -170,12 +168,12 @@ func TestVerifyCAWhitelist(t *testing.T) {
 	leaf2Cert, ca2Cert, rootCert := chain3[0], chain3[1], chain3[2]
 
 	t.Run("length 3 chain - first cert in whitelist is signer", func(t *testing.T) {
-		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*x509.Certificate{rootCert, unrelatedCert}))([][]byte{leaf2Cert.Raw, ca2Cert.Raw, unrelatedCert.Raw}, nil)
+		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*peertls.Certificate{rootCert, unrelatedCert}))([][]byte{leaf2Cert.Raw, ca2Cert.Raw, unrelatedCert.Raw}, nil)
 		assert.NoError(t, err)
 	})
 
 	t.Run("length 3 chain - last cert in whitelist is signer", func(t *testing.T) {
-		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*x509.Certificate{unrelatedCert, rootCert}))([][]byte{leaf2Cert.Raw, ca2Cert.Raw, unrelatedCert.Raw}, nil)
+		err = peertls.VerifyPeerFunc(peertls.VerifyCAWhitelist([]*peertls.Certificate{unrelatedCert, rootCert}))([][]byte{leaf2Cert.Raw, ca2Cert.Raw, unrelatedCert.Raw}, nil)
 		assert.NoError(t, err)
 	})
 }
@@ -218,17 +216,11 @@ func TestAddSignedCertExt(t *testing.T) {
 	assert.Len(t, chain[0].ExtraExtensions, 1)
 	assert.Equal(t, peertls.ExtensionIDs[peertls.SignedCertExtID], chain[0].ExtraExtensions[0].Id)
 
-	ecKey, ok := keys[0].(*ecdsa.PrivateKey)
-	if !assert.True(t, ok) {
-		t.FailNow()
-	}
-
-	err = peertls.VerifySignature(
+	ok := keys[0].PubKey().VerifyMsg(
 		chain[0].ExtraExtensions[0].Value,
 		chain[0].RawTBSCertificate,
-		&ecKey.PublicKey,
 	)
-	assert.NoError(t, err)
+	assert.True(t, ok)
 }
 
 func TestSignLeafExt(t *testing.T) {
@@ -243,13 +235,8 @@ func TestSignLeafExt(t *testing.T) {
 	assert.Equal(t, 1, len(leafCert.ExtraExtensions))
 	assert.True(t, peertls.ExtensionIDs[peertls.SignedCertExtID].Equal(leafCert.ExtraExtensions[0].Id))
 
-	caECKey, ok := caKey.(*ecdsa.PrivateKey)
-	if !assert.True(t, ok) {
-		t.FailNow()
-	}
-
-	err = peertls.VerifySignature(leafCert.ExtraExtensions[0].Value, leafCert.RawTBSCertificate, &caECKey.PublicKey)
-	assert.NoError(t, err)
+	ok := caKey.PubKey().VerifyMsg(leafCert.ExtraExtensions[0].Value, leafCert.RawTBSCertificate)
+	assert.True(t, ok)
 }
 
 func TestRevocation_Sign(t *testing.T) {
@@ -257,8 +244,7 @@ func TestRevocation_Sign(t *testing.T) {
 	assert.NoError(t, err)
 	leafCert, caKey := chain[0], keys[0]
 
-	leafHash, err := peertls.SHA256Hash(leafCert.Raw)
-	assert.NoError(t, err)
+	leafHash := peertls.SHA256Hash(leafCert.Raw)
 
 	rev := peertls.Revocation{
 		Timestamp: time.Now().Unix(),
@@ -275,8 +261,7 @@ func TestRevocation_Verify(t *testing.T) {
 	assert.NoError(t, err)
 	leafCert, caCert, caKey := chain[0], chain[1], keys[0]
 
-	leafHash, err := peertls.SHA256Hash(leafCert.Raw)
-	assert.NoError(t, err)
+	leafHash := peertls.SHA256Hash(leafCert.Raw)
 
 	rev := peertls.Revocation{
 		Timestamp: time.Now().Unix(),
@@ -296,8 +281,7 @@ func TestRevocation_Marshal(t *testing.T) {
 	assert.NoError(t, err)
 	leafCert, caKey := chain[0], keys[0]
 
-	leafHash, err := peertls.SHA256Hash(leafCert.Raw)
-	assert.NoError(t, err)
+	leafHash := peertls.SHA256Hash(leafCert.Raw)
 
 	rev := peertls.Revocation{
 		Timestamp: time.Now().Unix(),
@@ -324,8 +308,7 @@ func TestRevocation_Unmarshal(t *testing.T) {
 	assert.NoError(t, err)
 	leafCert, caKey := chain[0], keys[0]
 
-	leafHash, err := peertls.SHA256Hash(leafCert.Raw)
-	assert.NoError(t, err)
+	leafHash := peertls.SHA256Hash(leafCert.Raw)
 
 	rev := peertls.Revocation{
 		Timestamp: time.Now().Unix(),
@@ -389,10 +372,7 @@ func TestRevocationDB_Get(t *testing.T) {
 		assert.Nil(t, rev)
 	})
 
-	caHash, err := peertls.SHA256Hash(chain[1].Raw)
-	if !assert.NoError(t, err) {
-		t.FailNow()
-	}
+	caHash := peertls.SHA256Hash(chain[1].Raw)
 
 	err = revDB.DB.Put(caHash, ext.Value)
 	if !assert.NoError(t, err) {
@@ -483,10 +463,7 @@ func TestRevocationDB_Put(t *testing.T) {
 					t.FailNow()
 				}
 				func(t2 *testing.T, ext pkix.Extension) {
-					caHash, err := peertls.SHA256Hash(chain[1].Raw)
-					if !assert.NoError(t2, err) {
-						t2.FailNow()
-					}
+					caHash := peertls.SHA256Hash(chain[1].Raw)
 
 					revBytes, err := revDB.DB.Get(caHash)
 					if !assert.NoError(t2, err) {
@@ -507,14 +484,14 @@ type extensionHandlerMock struct {
 	mock.Mock
 }
 
-func (m *extensionHandlerMock) verify(ext pkix.Extension, chain [][]*x509.Certificate) error {
+func (m *extensionHandlerMock) verify(ext pkix.Extension, chain [][]*peertls.Certificate) error {
 	args := m.Called(ext, chain)
 	return args.Error(0)
 }
 
 func TestExtensionHandlers_VerifyFunc(t *testing.T) {
 	keys, chain, err := newRevokedLeafChain()
-	chains := [][]*x509.Certificate{chain}
+	chains := [][]*peertls.Certificate{chain}
 	if !assert.NoError(t, err) {
 		t.FailNow()
 	}
@@ -524,7 +501,7 @@ func TestExtensionHandlers_VerifyFunc(t *testing.T) {
 	}
 
 	extMock := new(extensionHandlerMock)
-	verify := func(ext pkix.Extension, chain [][]*x509.Certificate) error {
+	verify := func(ext pkix.Extension, chain [][]*peertls.Certificate) error {
 		return extMock.verify(ext, chain)
 	}
 
@@ -577,8 +554,8 @@ func TestParseExtensions(t *testing.T) {
 		testID    string
 		config    peertls.TLSExtConfig
 		extLen    int
-		certChain []*x509.Certificate
-		whitelist []*x509.Certificate
+		certChain []*peertls.Certificate
+		whitelist []*peertls.Certificate
 		errClass  *errs.Class
 		err       error
 	}{
@@ -587,7 +564,7 @@ func TestParseExtensions(t *testing.T) {
 			peertls.TLSExtConfig{WhitelistSignedLeaf: true},
 			1,
 			whitelistSignedChain,
-			[]*x509.Certificate{whitelistSignedChain[2]},
+			[]*peertls.Certificate{whitelistSignedChain[2]},
 			nil,
 			nil,
 		},
@@ -622,7 +599,7 @@ func TestParseExtensions(t *testing.T) {
 			"certificate revocation - serial revocations",
 			peertls.TLSExtConfig{Revocation: true},
 			1,
-			func() []*x509.Certificate {
+			func() []*peertls.Certificate {
 				rev := new(peertls.Revocation)
 				time.Sleep(1 * time.Second)
 				_, chain, err := revokeLeaf(revokedLeafKeys, revokedLeafChain)
@@ -641,7 +618,7 @@ func TestParseExtensions(t *testing.T) {
 			"certificate revocation - serial revocations error (older timestamp)",
 			peertls.TLSExtConfig{Revocation: true},
 			1,
-			func() []*x509.Certificate {
+			func() []*peertls.Certificate {
 				keys, chain, err := newRevokedLeafChain()
 				assert.NoError(t, err)
 
@@ -671,7 +648,7 @@ func TestParseExtensions(t *testing.T) {
 			"certificate revocation and leaf whitelist signature",
 			peertls.TLSExtConfig{Revocation: true, WhitelistSignedLeaf: true},
 			2,
-			func() []*x509.Certificate {
+			func() []*peertls.Certificate {
 				_, chain, err := newRevokedLeafChain()
 				assert.NoError(t, err)
 
@@ -680,7 +657,7 @@ func TestParseExtensions(t *testing.T) {
 
 				return chain
 			}(),
-			[]*x509.Certificate{whitelistSignedChain[2]},
+			[]*peertls.Certificate{whitelistSignedChain[2]},
 			nil,
 			nil,
 		},
@@ -695,7 +672,7 @@ func TestParseExtensions(t *testing.T) {
 
 			handlers := peertls.ParseExtensions(c.config, opts)
 			assert.Equal(t, c.extLen, len(handlers))
-			err := handlers.VerifyFunc()(nil, [][]*x509.Certificate{c.certChain})
+			err := handlers.VerifyFunc()(nil, [][]*peertls.Certificate{c.certChain})
 			if c.errClass != nil {
 				assert.True(t, c.errClass.Has(err))
 			}
@@ -709,8 +686,8 @@ func TestParseExtensions(t *testing.T) {
 	}
 }
 
-func revokeLeaf(keys []crypto.PrivateKey, chain []*x509.Certificate) ([]crypto.PrivateKey, []*x509.Certificate, error) {
-	revokingKey, err := peertls.NewKey()
+func revokeLeaf(keys []peertls.PrivateKey, chain []*peertls.Certificate) ([]peertls.PrivateKey, []*peertls.Certificate, error) {
+	revokingKey, err := peertls.GeneratePrivateKey()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -720,7 +697,7 @@ func revokeLeaf(keys []crypto.PrivateKey, chain []*x509.Certificate) ([]crypto.P
 		return nil, nil, err
 	}
 
-	revokingCert, err := peertls.NewCert(revokingKey, keys[0], revokingTemplate, chain[1])
+	revokingCert, err := peertls.CreateCertificate(revokingKey.PubKey(), keys[0], revokingTemplate, chain[1].Certificate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -730,10 +707,10 @@ func revokeLeaf(keys []crypto.PrivateKey, chain []*x509.Certificate) ([]crypto.P
 		return nil, nil, err
 	}
 
-	return keys, append([]*x509.Certificate{revokingCert}, chain[1:]...), nil
+	return keys, append([]*peertls.Certificate{revokingCert}, chain[1:]...), nil
 }
 
-func newRevokedLeafChain() ([]crypto.PrivateKey, []*x509.Certificate, error) {
+func newRevokedLeafChain() ([]peertls.PrivateKey, []*peertls.Certificate, error) {
 	keys2, certs2, err := testpeertls.NewCertChain(2)
 	if err != nil {
 		return nil, nil, err
