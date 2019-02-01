@@ -5,8 +5,6 @@ package peertls
 
 import (
 	"bytes"
-	"crypto"
-	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -20,12 +18,14 @@ import (
 )
 
 const (
-	// BlockTypeEcPrivateKey is the value to define a block type of private key
-	BlockTypeEcPrivateKey = "EC PRIVATE KEY"
-	// BlockTypeCertificate is the value to define a block type of certificates
-	BlockTypeCertificate = "CERTIFICATE"
-	// BlockTypeExtension is the value to define a block type of certificate extensions
-	BlockTypeExtension = "EXTENSION"
+	// PEMLabelEcPrivateKey is the value to define a block type of elliptic curve private key
+	PEMLabelEcPrivateKey = "EC PRIVATE KEY"
+	// PEMLabelEcPublicKey is the value to define a block type of elliptic curve public key
+	PEMLabelEcPublicKey = "ECDSA PUBLIC KEY"
+	// PEMLabelCertificate is the value to define a block type of certificates
+	PEMLabelCertificate = "CERTIFICATE"
+	// PEMLabelExtension is the value to define a block type of certificate extensions
+	PEMLabelExtension = "EXTENSION"
 )
 
 var (
@@ -41,8 +41,10 @@ var (
 	ErrVerifyPeerCert = errs.Class("tls peer certificate verification error")
 	// ErrParseCerts is used when an error occurs while parsing a certificate or cert chain.
 	ErrParseCerts = errs.Class("unable to parse certificate")
-	// ErrVerifySignature is used when a cert-chain signature verificaion error occurs.
-	ErrVerifySignature = errs.Class("tls certificate signature verification error")
+	// ErrParseKey is used when an error occurs while parsing a private key.
+	ErrParseKey = errs.Class("unable to parse key")
+	// ErrVerifySignature is used when a signature can not be verified.
+	ErrVerifySignature = errs.Class("signature verification error")
 	// ErrVerifyCertificateChain is used when a certificate chain can't be verified from leaf to root
 	// (i.e.: each cert in the chain should be signed by the preceding cert and the root should be self-signed).
 	ErrVerifyCertificateChain = errs.Class("certificate chain signature verification failed")
@@ -52,13 +54,59 @@ var (
 	ErrSign = errs.Class("unable to generate signature")
 )
 
-// PeerCertVerificationFunc is the signature for a `*tls.Config{}`'s
+type Certificate struct {
+	*x509.Certificate
+	pubKey PublicKey
+}
+
+func NewCertificate(x509Cert *x509.Certificate) (*Certificate, error) {
+	pubKey := NewPublicKey(x509Cert.PublicKey)
+	if pubKey == nil {
+		return nil, ErrUnsupportedKey.New("certificate %q public key type %s",
+			x509Cert.Subject.String(), x509Cert.PublicKeyAlgorithm.String())
+	}
+	return &Certificate{x509Cert, pubKey}, nil
+}
+
+func (cert *Certificate) PubKey() PublicKey {
+	return cert.pubKey
+}
+
+func (cert *Certificate) VerifyMsg(msg, sig []byte) bool {
+	return cert.pubKey.VerifyMsg(msg, sig)
+}
+
+func LoadCertificateFromBytes(certBytes []byte) (*Certificate, error) {
+	x509Cert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		return nil, ErrParseCerts.Wrap(err)
+	}
+	return NewCertificate(x509Cert)
+}
+
+func CertificatesSlice(x509Certs []*x509.Certificate) ([]*Certificate, error) {
+	certs := make([]*Certificate, len(x509Certs))
+	for i, xCert := range x509Certs {
+		cert, err := NewCertificate(xCert)
+		if err != nil {
+			return nil, ErrUnsupportedKey.New("chain index %d: %v", i, errs.Unwrap(err))
+		}
+		certs[i] = cert
+	}
+	return certs, nil
+}
+
+// PeerX509CertVerificationFunc is the signature for a `*tls.Config{}`'s
 // `VerifyPeerCertificate` function.
-type PeerCertVerificationFunc func([][]byte, [][]*x509.Certificate) error
+type PeerX509CertVerificationFunc func([][]byte, [][]*x509.Certificate) error
+
+// PeerCertVerificationFunc is the signature for VerifyPeerFunc argument functions
+// that accept peertls-aware Certificate objects.
+type PeerCertVerificationFunc func([][]byte, [][]*Certificate) error
 
 // VerifyPeerFunc combines multiple `*tls.Config#VerifyPeerCertificate`
 // functions and adds certificate parsing.
-func VerifyPeerFunc(next ...PeerCertVerificationFunc) PeerCertVerificationFunc {
+func VerifyPeerFunc(next ...PeerCertVerificationFunc) PeerX509CertVerificationFunc {
 	return func(chain [][]byte, _ [][]*x509.Certificate) error {
 		c, err := parseCertificateChains(chain)
 		if err != nil {
@@ -67,7 +115,7 @@ func VerifyPeerFunc(next ...PeerCertVerificationFunc) PeerCertVerificationFunc {
 
 		for _, n := range next {
 			if n != nil {
-				if err := n(chain, [][]*x509.Certificate{c}); err != nil {
+				if err := n(chain, [][]*Certificate{c}); err != nil {
 					return ErrVerifyPeerCert.Wrap(err)
 				}
 			}
@@ -78,20 +126,19 @@ func VerifyPeerFunc(next ...PeerCertVerificationFunc) PeerCertVerificationFunc {
 
 // VerifyPeerCertChains verifies that the first certificate chain contains certificates
 // which are signed by their respective parents, ending with a self-signed root.
-func VerifyPeerCertChains(_ [][]byte, parsedChains [][]*x509.Certificate) error {
+func VerifyPeerCertChains(_ [][]byte, parsedChains [][]*Certificate) error {
 	return verifyChainSignatures(parsedChains[0])
 }
 
 // VerifyCAWhitelist verifies that the peer identity's CA was signed by any one
 // of the (certificate authority) certificates in the provided whitelist.
-func VerifyCAWhitelist(cas []*x509.Certificate) PeerCertVerificationFunc {
+func VerifyCAWhitelist(cas []*Certificate) PeerCertVerificationFunc {
 	if cas == nil {
 		return nil
 	}
-	return func(_ [][]byte, parsedChains [][]*x509.Certificate) error {
+	return func(_ [][]byte, parsedChains [][]*Certificate) error {
 		for _, ca := range cas {
-			err := verifyCertSignature(ca, parsedChains[0][CAIndex])
-			if err == nil {
+			if ok := verifyCertSignature(ca, parsedChains[0][CAIndex]); ok {
 				return nil
 			}
 		}
@@ -99,43 +146,40 @@ func VerifyCAWhitelist(cas []*x509.Certificate) PeerCertVerificationFunc {
 	}
 }
 
-// NewKeyBlock converts an ASN1/DER-encoded byte-slice of a private key into
-// a `pem.Block` pointer.
-func NewKeyBlock(b []byte) *pem.Block {
-	return &pem.Block{Type: BlockTypeEcPrivateKey, Bytes: b}
-}
-
 // NewCertBlock converts an ASN1/DER-encoded byte-slice of a tls certificate
 // into a `pem.Block` pointer.
 func NewCertBlock(b []byte) *pem.Block {
-	return &pem.Block{Type: BlockTypeCertificate, Bytes: b}
+	return &pem.Block{Type: PEMLabelCertificate, Bytes: b}
 }
 
 // NewExtensionBlock converts an ASN1/DER-encoded byte-slice of a tls certificate
 // extension into a `pem.Block` pointer.
 func NewExtensionBlock(b []byte) *pem.Block {
-	return &pem.Block{Type: BlockTypeExtension, Bytes: b}
+	return &pem.Block{Type: PEMLabelExtension, Bytes: b}
 }
 
 // TLSCert creates a tls.Certificate from chains, key and leaf.
-func TLSCert(chain [][]byte, leaf *x509.Certificate, key crypto.PrivateKey) (*tls.Certificate, error) {
+func TLSCert(chain [][]byte, leaf *Certificate, key PrivateKey) (*tls.Certificate, error) {
 	var err error
+	var leafX509 *x509.Certificate
 	if leaf == nil {
-		leaf, err = x509.ParseCertificate(chain[0])
+		leafX509, err = x509.ParseCertificate(chain[0])
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		leafX509 = leaf.Certificate
 	}
 
 	return &tls.Certificate{
-		Leaf:        leaf,
+		Leaf:        leafX509,
 		Certificate: chain,
-		PrivateKey:  key,
+		PrivateKey:  key.CryptoPrivate(),
 	}, nil
 }
 
 // WriteChain writes the certificate chain (leaf-first) to the writer, PEM-encoded.
-func WriteChain(w io.Writer, chain ...*x509.Certificate) error {
+func WriteChain(w io.Writer, chain ...*Certificate) error {
 	if len(chain) < 1 {
 		return errs.New("expected at least one certificate for writing")
 	}
@@ -160,53 +204,46 @@ func WriteChain(w io.Writer, chain ...*x509.Certificate) error {
 }
 
 // ChainBytes returns bytes of the certificate chain (leaf-first) to the writer, PEM-encoded.
-func ChainBytes(chain ...*x509.Certificate) ([]byte, error) {
+func ChainBytes(chain ...*Certificate) ([]byte, error) {
 	var data bytes.Buffer
 	err := WriteChain(&data, chain...)
 	return data.Bytes(), err
 }
 
-// NewCert returns a new x509 certificate using the provided templates and key,
-// signed by the parent cert if provided; otherwise, self-signed.
-func NewCert(key, parentKey crypto.PrivateKey, template, parent *x509.Certificate) (*x509.Certificate, error) {
-	p, ok := key.(*ecdsa.PrivateKey)
-	if !ok {
-		return nil, ErrUnsupportedKey.New("%T", key)
-	}
+// CreateSelfSignedCertificate creates a new self-signed X.509v3 certificate
+// using fields from the given template.
+func CreateSelfSignedCertificate(key PrivateKey, template *x509.Certificate) (*Certificate, error) {
+	return CreateCertificate(key.PubKey(), key, template, template)
+}
 
-	var signingKey crypto.PrivateKey
-	if parentKey != nil {
-		signingKey = parentKey
-	} else {
-		signingKey = key
-	}
-
-	if parent == nil {
-		parent = template
-	}
-
+// CreateCertificate creates a new X.509v3 certificate based on a template.
+// The new certificate:
+//
+//  * will have the public key given as 'signee'
+//  * will be signed by 'signer' (which should be the private key of 'issuer')
+//  * will be issued by 'issuer'
+//  * will have metadata fields copied from 'template'
+//
+// Returns the new Certificate object.
+func CreateCertificate(signee PublicKey, signer PrivateKey, template, issuer *x509.Certificate) (
+	*Certificate, error) {
 	cb, err := x509.CreateCertificate(
 		rand.Reader,
 		template,
-		parent,
-		&p.PublicKey,
-		signingKey,
+		issuer,
+		signee.CryptoPublic(),
+		signer.CryptoPrivate(),
 	)
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-
-	cert, err := x509.ParseCertificate(cb)
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return cert, nil
+	return LoadCertificateFromBytes(cb)
 }
 
 // VerifyUnrevokedChainFunc returns a peer certificate verification function which
 // returns an error if the incoming cert chain contains a revoked CA or leaf.
 func VerifyUnrevokedChainFunc(revDB *RevocationDB) PeerCertVerificationFunc {
-	return func(_ [][]byte, chains [][]*x509.Certificate) error {
+	return func(_ [][]byte, chains [][]*Certificate) error {
 		leaf := chains[0][LeafIndex]
 		ca := chains[0][CAIndex]
 		lastRev, lastRevErr := revDB.Get(chains[0])

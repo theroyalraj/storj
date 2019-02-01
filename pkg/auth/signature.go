@@ -4,9 +4,7 @@
 package auth
 
 import (
-	"crypto/ecdsa"
-
-	"github.com/gtank/cryptopasta"
+	"encoding/pem"
 
 	"storj.io/storj/pkg/identity"
 	"storj.io/storj/pkg/pb"
@@ -15,32 +13,28 @@ import (
 
 // GenerateSignature creates signature from identity id
 func GenerateSignature(data []byte, identity *identity.FullIdentity) ([]byte, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-
-	k, ok := identity.Key.(*ecdsa.PrivateKey)
-	if !ok {
-		return nil, peertls.ErrUnsupportedKey.New("%T", identity.Key)
-	}
-	signature, err := cryptopasta.Sign(data, k)
-	if err != nil {
-		return nil, err
-	}
-	return signature, nil
+	return identity.Key.SignMsg(data)
 }
 
 // NewSignedMessage creates instance of signed message
 func NewSignedMessage(signature []byte, identity *identity.FullIdentity) (*pb.SignedMessage, error) {
-	k, ok := identity.Leaf.PublicKey.(*ecdsa.PublicKey)
-	if !ok {
-		return nil, peertls.ErrUnsupportedKey.New("%T", identity.Leaf.PublicKey)
-	}
-
-	encodedKey, err := cryptopasta.EncodePublicKey(k)
+	derBytes, err := identity.Leaf.PubKey().MarshalToDER()
 	if err != nil {
 		return nil, err
 	}
+
+	// We go the extra step to encode the DER bytes to PEM, although this isn't
+	// meant for human consumption and doesn't need to be in ASCII. This is for
+	// backwards compatibility, or in case there is some other non-obvious reason
+	// for it (if there is, please add an explanatory comment!).
+	//
+	// Or if this is changed to use the DER bytes directly, make the corresponding
+	// changes in NewSignedMessageVerifier(), below.
+	encodedKey := pem.EncodeToMemory(&pem.Block{
+		Type:  identity.Leaf.PubKey().PEMLabel(),
+		Bytes: derBytes,
+	})
+
 	return &pb.SignedMessage{
 		Data:      identity.ID.Bytes(),
 		Signature: signature,
@@ -67,11 +61,11 @@ func NewSignedMessageVerifier() SignedMessageVerifier {
 			return Error.New("missing public key for verification")
 		}
 
-		k, err := cryptopasta.DecodePublicKey(signedMessage.GetPublicKey())
+		k, err := peertls.LoadPublicKeyFromPEMBytes(signedMessage.GetPublicKey())
 		if err != nil {
-			return Error.Wrap(err)
+			return err
 		}
-		if ok := cryptopasta.Verify(signedMessage.GetData(), signedMessage.GetSignature(), k); !ok {
+		if ok := k.VerifyMsg(signedMessage.GetData(), signedMessage.GetSignature()); !ok {
 			return Error.New("failed to verify message")
 		}
 		return nil

@@ -5,7 +5,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/x509"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -13,6 +12,7 @@ import (
 
 	"storj.io/storj/pkg/cfgstruct"
 	"storj.io/storj/pkg/identity"
+	"storj.io/storj/pkg/peertls"
 )
 
 type verifyConfig struct {
@@ -88,7 +88,7 @@ func cmdVerify(cmd *cobra.Command, args []string) error {
 }
 
 func checkIdentChain(opts checkOpts, errFmt string) {
-	identChain := append([]*x509.Certificate{
+	identChain := append([]*peertls.Certificate{
 		opts.identity.Leaf,
 		opts.identity.CA,
 	}, opts.identity.RestChain...)
@@ -97,7 +97,7 @@ func checkIdentChain(opts checkOpts, errFmt string) {
 }
 
 func checkCAChain(opts checkOpts, errFmt string) {
-	caChain := append([]*x509.Certificate{
+	caChain := append([]*peertls.Certificate{
 		opts.ca.Cert,
 	}, opts.ca.RestChain...)
 
@@ -127,14 +127,14 @@ func checkIdentContainsCA(opts checkOpts, errFmt string) {
 	}
 }
 
-func verifyChain(chain []*x509.Certificate, errFormat string, errGroup *errs.Group) {
+func verifyChain(chain []*peertls.Certificate, errFormat string, errGroup *errs.Group) {
 	for i, cert := range chain {
 		if i+1 == len(chain) {
 			break
 		}
 		parent := chain[i+1]
 
-		if err := cert.CheckSignatureFrom(parent); err != nil {
+		if err := cert.CheckSignatureFrom(parent.Certificate); err != nil {
 			errGroup.Add(errs.New(errFormat, err))
 			break
 

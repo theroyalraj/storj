@@ -4,13 +4,12 @@
 package main
 
 import (
-	"crypto/x509"
-
 	"github.com/spf13/cobra"
 	"github.com/zeebo/errs"
 
 	"storj.io/storj/pkg/cfgstruct"
 	"storj.io/storj/pkg/identity"
+	"storj.io/storj/pkg/peertls"
 )
 
 var (
@@ -48,7 +47,7 @@ func cmdSign(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	restChain := []*x509.Certificate{signer.Cert}
+	restChain := []*peertls.Certificate{signer.Cert}
 
 	// NB: backup ca and identity
 	err = signCfg.CA.SaveBackup(ca)

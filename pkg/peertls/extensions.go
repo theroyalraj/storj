@@ -5,8 +5,6 @@ package peertls
 
 import (
 	"bytes"
-	"crypto"
-	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/binary"
@@ -73,7 +71,7 @@ type TLSExtConfig struct {
 // ExtensionHandlers is a collection of `extensionHandler`s for convenience (see `VerifyFunc`)
 type ExtensionHandlers []ExtensionHandler
 
-type extensionVerificationFunc func(pkix.Extension, [][]*x509.Certificate) error
+type extensionVerificationFunc func(pkix.Extension, [][]*Certificate) error
 
 // ExtensionHandler represents a verify function for handling an extension
 // with the given ID
@@ -84,7 +82,7 @@ type ExtensionHandler struct {
 
 // ParseExtOptions holds options for calling `ParseExtensions`
 type ParseExtOptions struct {
-	CAWhitelist []*x509.Certificate
+	CAWhitelist []*Certificate
 	RevDB       *RevocationDB
 }
 
@@ -117,7 +115,7 @@ func ParseExtensions(c TLSExtConfig, opts ParseExtOptions) (handlers ExtensionHa
 	if c.Revocation {
 		handlers = append(handlers, ExtensionHandler{
 			ID: ExtensionIDs[RevocationExtID],
-			Verify: func(certExt pkix.Extension, chains [][]*x509.Certificate) error {
+			Verify: func(certExt pkix.Extension, chains [][]*Certificate) error {
 				if err := opts.RevDB.Put(chains[0], certExt); err != nil {
 					return err
 				}
@@ -152,13 +150,10 @@ func NewRevocationDBRedis(address string) (*RevocationDB, error) {
 }
 
 // NewRevocationExt generates a revocation extension for a certificate.
-func NewRevocationExt(key crypto.PrivateKey, revokedCert *x509.Certificate) (pkix.Extension, error) {
+func NewRevocationExt(key PrivateKey, revokedCert *Certificate) (pkix.Extension, error) {
 	nowUnix := time.Now().Unix()
 
-	hash, err := SHA256Hash(revokedCert.Raw)
-	if err != nil {
-		return pkix.Extension{}, err
-	}
+	hash := SHA256Hash(revokedCert.Raw)
 	rev := Revocation{
 		Timestamp: nowUnix,
 		CertHash:  make([]byte, len(hash)),
@@ -185,7 +180,7 @@ func NewRevocationExt(key crypto.PrivateKey, revokedCert *x509.Certificate) (pki
 
 // AddRevocationExt generates a revocation extension for a cert and attaches it
 // to the cert which will replace the revoked cert.
-func AddRevocationExt(key crypto.PrivateKey, revokedCert, newCert *x509.Certificate) error {
+func AddRevocationExt(key PrivateKey, revokedCert, newCert *Certificate) error {
 	ext, err := NewRevocationExt(key, revokedCert)
 	if err != nil {
 		return err
@@ -199,8 +194,8 @@ func AddRevocationExt(key crypto.PrivateKey, revokedCert, newCert *x509.Certific
 
 // AddSignedCertExt generates a signed certificate extension for a cert and attaches
 // it to that cert.
-func AddSignedCertExt(key crypto.PrivateKey, cert *x509.Certificate) error {
-	signature, err := signHashOf(key, cert.RawTBSCertificate)
+func AddSignedCertExt(key PrivateKey, cert *Certificate) error {
+	signature, err := key.SignMsg(cert.RawTBSCertificate)
 	if err != nil {
 		return err
 	}
@@ -216,7 +211,7 @@ func AddSignedCertExt(key crypto.PrivateKey, cert *x509.Certificate) error {
 }
 
 // AddExtension adds one or more extensions to a certificate
-func AddExtension(cert *x509.Certificate, exts ...pkix.Extension) (err error) {
+func AddExtension(cert *Certificate, exts ...pkix.Extension) (err error) {
 	if len(exts) == 0 {
 		return nil
 	}
@@ -239,7 +234,7 @@ func (e ExtensionHandlers) VerifyFunc() PeerCertVerificationFunc {
 	if len(e) == 0 {
 		return nil
 	}
-	return func(_ [][]byte, parsedChains [][]*x509.Certificate) error {
+	return func(_ [][]byte, parsedChains [][]*Certificate) error {
 		leafExts := make(map[string]pkix.Extension)
 		for _, ext := range parsedChains[0][LeafIndex].ExtraExtensions {
 			leafExts[ext.Id.String()] = ext
@@ -259,12 +254,8 @@ func (e ExtensionHandlers) VerifyFunc() PeerCertVerificationFunc {
 
 // Get attempts to retrieve the most recent revocation for the given cert chain
 // (the  key used in the underlying database is the hash of the CA cert bytes).
-func (r RevocationDB) Get(chain []*x509.Certificate) (*Revocation, error) {
-	hash, err := SHA256Hash(chain[CAIndex].Raw)
-	if err != nil {
-		return nil, ErrRevocation.Wrap(err)
-	}
-
+func (r RevocationDB) Get(chain []*Certificate) (*Revocation, error) {
+	hash := SHA256Hash(chain[CAIndex].Raw)
 	revBytes, err := r.DB.Get(hash)
 	if err != nil && !storage.ErrKeyNotFound.Has(err) {
 		return nil, ErrRevocationDB.Wrap(err)
@@ -283,7 +274,7 @@ func (r RevocationDB) Get(chain []*x509.Certificate) (*Revocation, error) {
 // Put stores the most recent revocation for the given cert chain IF the timestamp
 // is newer than the current value (the  key used in the underlying database is
 // the hash of the CA cert bytes).
-func (r RevocationDB) Put(chain []*x509.Certificate, revExt pkix.Extension) error {
+func (r RevocationDB) Put(chain []*Certificate, revExt pkix.Extension) error {
 	ca := chain[CAIndex]
 	var rev Revocation
 	if err := rev.Unmarshal(revExt.Value); err != nil {
@@ -304,14 +295,8 @@ func (r RevocationDB) Put(chain []*x509.Certificate, revExt pkix.Extension) erro
 		return ErrRevocationTimestamp
 	}
 
-	hash, err := SHA256Hash(ca.Raw)
-	if err != nil {
-		return err
-	}
-	if err := r.DB.Put(hash, revExt.Value); err != nil {
-		return err
-	}
-	return nil
+	hash := SHA256Hash(ca.Raw)
+	return r.DB.Put(hash, revExt.Value)
 }
 
 // Close closes the underlying store
@@ -320,30 +305,21 @@ func (r RevocationDB) Close() error {
 }
 
 // Verify checks if the signature of the revocation was produced by the passed cert's public key.
-func (r Revocation) Verify(signingCert *x509.Certificate) error {
-	pubKey, ok := signingCert.PublicKey.(crypto.PublicKey)
-	if !ok {
-		return ErrUnsupportedKey.New("%T", signingCert.PublicKey)
-	}
-
-	data, err := r.TBSBytes()
-	if err != nil {
-		return err
-	}
-
-	if err := VerifySignature(r.Signature, data, pubKey); err != nil {
-		return err
+func (r Revocation) Verify(signer MessageVerifier) error {
+	if ok := signer.VerifyMsg(r.Signature, r.TBSBytes()); !ok {
+		return ErrVerifySignature.New("bad signature")
 	}
 	return nil
 }
 
 // TBSBytes (ToBeSigned) returns the hash of the revoked certificate hash and
 // the timestamp (i.e. hash(hash(cert bytes) + timestamp)).
-func (r *Revocation) TBSBytes() ([]byte, error) {
+func (r *Revocation) TBSBytes() []byte {
 	toHash := new(bytes.Buffer)
 	_, err := toHash.Write(r.CertHash)
 	if err != nil {
-		return nil, ErrExtension.Wrap(err)
+		// bytes.Buffer's Write method is documented as never returning nil
+		panic(nil)
 	}
 
 	// NB: append timestamp to revoked cert bytes
@@ -353,16 +329,12 @@ func (r *Revocation) TBSBytes() ([]byte, error) {
 }
 
 // Sign generates a signature using the passed key and attaches it to the revocation.
-func (r *Revocation) Sign(key crypto.PrivateKey) error {
-	data, err := r.TBSBytes()
+func (r *Revocation) Sign(key PrivateKey) error {
+	sig, err := key.SignMsg(r.TBSBytes())
 	if err != nil {
 		return err
 	}
-
-	r.Signature, err = signHashOf(key, data)
-	if err != nil {
-		return err
-	}
+	r.Signature = sig
 	return nil
 }
 
@@ -389,16 +361,15 @@ func (r *Revocation) Unmarshal(data []byte) error {
 	return nil
 }
 
-func verifyCAWhitelistSignedLeafFunc(caWhitelist []*x509.Certificate) extensionVerificationFunc {
-	return func(certExt pkix.Extension, chains [][]*x509.Certificate) error {
+func verifyCAWhitelistSignedLeafFunc(caWhitelist []*Certificate) extensionVerificationFunc {
+	return func(certExt pkix.Extension, chains [][]*Certificate) error {
 		if caWhitelist == nil {
 			return ErrVerifyCAWhitelist.New("no whitelist provided")
 		}
 
 		leaf := chains[0][LeafIndex]
 		for _, ca := range caWhitelist {
-			err := VerifySignature(certExt.Value, leaf.RawTBSCertificate, ca.PublicKey)
-			if err == nil {
+			if ok := ca.VerifyMsg(certExt.Value, leaf.RawTBSCertificate); ok {
 				return nil
 			}
 		}

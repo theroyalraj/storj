@@ -5,7 +5,6 @@ package identity
 
 import (
 	"context"
-	"crypto/ecdsa"
 
 	"storj.io/storj/pkg/peertls"
 	"storj.io/storj/pkg/storj"
@@ -14,7 +13,7 @@ import (
 // GenerateKey generates a private key with a node id with difficulty at least
 // minDifficulty. No parallelism is used.
 func GenerateKey(ctx context.Context, minDifficulty uint16) (
-	k *ecdsa.PrivateKey, id storj.NodeID, err error) {
+	k peertls.PrivateKey, id storj.NodeID, err error) {
 	var d uint16
 	for {
 		err = ctx.Err()
@@ -25,7 +24,7 @@ func GenerateKey(ctx context.Context, minDifficulty uint16) (
 		if err != nil {
 			break
 		}
-		id, err = NodeIDFromECDSAKey(&k.PublicKey)
+		id, err = NodeIDFromKey(k.PubKey())
 		if err != nil {
 			break
 		}
@@ -42,7 +41,7 @@ func GenerateKey(ctx context.Context, minDifficulty uint16) (
 
 // GenerateCallback indicates that key generation is done when done is true.
 // if err != nil key generation will stop with that error
-type GenerateCallback func(*ecdsa.PrivateKey, storj.NodeID) (done bool, err error)
+type GenerateCallback func(peertls.PrivateKey, storj.NodeID) (done bool, err error)
 
 // GenerateKeys continues to generate keys until found returns done == false,
 // or the ctx is canceled.

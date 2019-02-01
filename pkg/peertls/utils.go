@@ -14,7 +14,6 @@ package peertls
 import (
 	"crypto"
 	"crypto/rand"
-	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
 
@@ -22,15 +21,16 @@ import (
 )
 
 // SHA256Hash calculates the SHA256 hash of the input data
-func SHA256Hash(data []byte) ([]byte, error) {
+func SHA256Hash(data []byte) []byte {
 	hash := crypto.SHA256.New()
 	if _, err := hash.Write(data); err != nil {
-		return nil, err
+		// hash.Write() is documented as never returning an error
+		panic(err)
 	}
-	return hash.Sum(nil), nil
+	return hash.Sum(nil)
 }
 
-func parseCertificateChains(rawCerts [][]byte) ([]*x509.Certificate, error) {
+func parseCertificateChains(rawCerts [][]byte) ([]*Certificate, error) {
 	parsedCerts, err := parseCerts(rawCerts)
 	if err != nil {
 		return nil, err
@@ -39,33 +39,31 @@ func parseCertificateChains(rawCerts [][]byte) ([]*x509.Certificate, error) {
 	return parsedCerts, nil
 }
 
-func parseCerts(rawCerts [][]byte) ([]*x509.Certificate, error) {
-	certs := make([]*x509.Certificate, len(rawCerts))
-	for i, c := range rawCerts {
-		var err error
-		certs[i], err = x509.ParseCertificate(c)
+func parseCerts(rawCerts [][]byte) ([]*Certificate, error) {
+	certs := make([]*Certificate, len(rawCerts))
+	for i, rawCert := range rawCerts {
+		cert, err := LoadCertificateFromBytes(rawCert)
 		if err != nil {
-			return nil, ErrParseCerts.New("unable to parse certificate at index %d", i)
+			return nil, ErrParseCerts.New("chain index %d: %v", i, err)
 		}
+		certs[i] = cert
 	}
 	return certs, nil
 }
 
-func verifyChainSignatures(certs []*x509.Certificate) error {
+func verifyChainSignatures(certs []*Certificate) error {
 	for i, cert := range certs {
 		j := len(certs)
 		if i+1 < j {
-			err := verifyCertSignature(certs[i+1], cert)
-			if err != nil {
-				return ErrVerifyCertificateChain.Wrap(err)
+			if ok := verifyCertSignature(certs[i+1], cert); !ok {
+				return ErrVerifyCertificateChain.New("signature on cert %d", i)
 			}
 
 			continue
 		}
 
-		err := verifyCertSignature(cert, cert)
-		if err != nil {
-			return ErrVerifyCertificateChain.Wrap(err)
+		if ok := verifyCertSignature(cert, cert); !ok {
+			return ErrVerifyCertificateChain.New("self-signature on cert %d", i)
 		}
 
 	}
@@ -73,8 +71,8 @@ func verifyChainSignatures(certs []*x509.Certificate) error {
 	return nil
 }
 
-func verifyCertSignature(parentCert, childCert *x509.Certificate) error {
-	return VerifySignature(childCert.Signature, childCert.RawTBSCertificate, parentCert.PublicKey)
+func verifyCertSignature(parentCert *Certificate, childCert *Certificate) bool {
+	return parentCert.PubKey().VerifyMsg(childCert.Signature, childCert.RawTBSCertificate)
 }
 
 func newSerialNumber() (*big.Int, error) {
@@ -96,15 +94,4 @@ func uniqueExts(exts []pkix.Extension) bool {
 		seen[s] = struct{}{}
 	}
 	return true
-}
-func signHashOf(key crypto.PrivateKey, data []byte) ([]byte, error) {
-	hash, err := SHA256Hash(data)
-	if err != nil {
-		return nil, ErrSign.Wrap(err)
-	}
-	signature, err := signBytes(key, hash)
-	if err != nil {
-		return nil, ErrSign.Wrap(err)
-	}
-	return signature, nil
 }

@@ -6,11 +6,6 @@ package identity
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -29,22 +24,22 @@ const minimumLoggableDifficulty = 8
 
 // PeerCertificateAuthority represents the CA which is used to validate peer identities
 type PeerCertificateAuthority struct {
-	RestChain []*x509.Certificate
+	RestChain []*peertls.Certificate
 	// Cert is the x509 certificate of the CA
-	Cert *x509.Certificate
+	Cert *peertls.Certificate
 	// The ID is calculated from the CA public key.
 	ID storj.NodeID
 }
 
 // FullCertificateAuthority represents the CA which is used to author and validate full identities
 type FullCertificateAuthority struct {
-	RestChain []*x509.Certificate
+	RestChain []*peertls.Certificate
 	// Cert is the x509 certificate of the CA
-	Cert *x509.Certificate
+	Cert *peertls.Certificate
 	// The ID is calculated from the CA public key.
 	ID storj.NodeID
 	// Key is the private key of the CA
-	Key crypto.PrivateKey
+	Key peertls.PrivateKey
 }
 
 // CASetupConfig is for creating a CA
@@ -66,9 +61,9 @@ type NewCAOptions struct {
 	// Concurrency is the number of go routines used to generate a CA of sufficient difficulty
 	Concurrency uint
 	// ParentCert, if provided will be prepended to the certificate chain
-	ParentCert *x509.Certificate
+	ParentCert *peertls.Certificate
 	// ParentKey ()
-	ParentKey crypto.PrivateKey
+	ParentKey peertls.PrivateKey
 	// Logger is used to log generation status updates
 	Logger io.Writer
 }
@@ -92,7 +87,7 @@ func NewCA(ctx context.Context, opts NewCAOptions) (_ *FullCertificateAuthority,
 		i         = new(uint32)
 
 		mu          sync.Mutex
-		selectedKey *ecdsa.PrivateKey
+		selectedKey peertls.PrivateKey
 		selectedID  storj.NodeID
 	)
 
@@ -114,7 +109,7 @@ func NewCA(ctx context.Context, opts NewCAOptions) (_ *FullCertificateAuthority,
 		}
 	}
 	err = GenerateKeys(ctx, minimumLoggableDifficulty, int(opts.Concurrency),
-		func(k *ecdsa.PrivateKey, id storj.NodeID) (done bool, err error) {
+		func(k peertls.PrivateKey, id storj.NodeID) (done bool, err error) {
 			if opts.Logger != nil {
 				if atomic.AddUint32(i, 1)%100 == 0 {
 					updateStatus()
@@ -160,7 +155,7 @@ func NewCA(ctx context.Context, opts NewCAOptions) (_ *FullCertificateAuthority,
 	if err != nil {
 		return nil, err
 	}
-	c, err := peertls.NewCert(selectedKey, opts.ParentKey, ct, opts.ParentCert)
+	c, err := peertls.CreateCertificate(selectedKey.PubKey(), opts.ParentKey, ct, opts.ParentCert.Certificate)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +165,7 @@ func NewCA(ctx context.Context, opts NewCAOptions) (_ *FullCertificateAuthority,
 		ID:   selectedID,
 	}
 	if opts.ParentCert != nil {
-		ca.RestChain = []*x509.Certificate{opts.ParentCert}
+		ca.RestChain = []*peertls.Certificate{opts.ParentCert}
 	}
 	return ca, nil
 }
@@ -236,10 +231,9 @@ func (fc FullCAConfig) Load() (*FullCertificateAuthority, error) {
 	if err != nil {
 		return nil, peertls.ErrNotExist.Wrap(err)
 	}
-	kp, _ := pem.Decode(kb)
-	k, err := x509.ParseECPrivateKey(kp.Bytes)
+	k, err := peertls.LoadPrivateKeyFromBytes(kb)
 	if err != nil {
-		return nil, errs.New("unable to parse EC private key: %v", err)
+		return nil, errs.New("unable to load private key: %v", err)
 	}
 
 	return &FullCertificateAuthority{
@@ -264,7 +258,7 @@ func (fc FullCAConfig) Save(ca *FullCertificateAuthority) error {
 		writeErrs         utils.ErrorGroup
 	)
 
-	chain := []*x509.Certificate{ca.Cert}
+	chain := []*peertls.Certificate{ca.Cert}
 	chain = append(chain, ca.RestChain...)
 
 	if fc.CertPath != "" {
@@ -312,7 +306,7 @@ func (pc PeerCAConfig) Load() (*PeerCertificateAuthority, error) {
 			pc.CertPath, err)
 	}
 
-	nodeID, err := NodeIDFromKey(chain[peertls.LeafIndex].PublicKey)
+	nodeID, err := NodeIDFromKey(chain[peertls.LeafIndex].PubKey())
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +332,7 @@ func (ca *FullCertificateAuthority) NewIdentity() (*FullIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
-	leafCert, err := peertls.NewCert(leafKey, ca.Key, leafTemplate, ca.Cert)
+	leafCert, err := peertls.CreateCertificate(leafKey.PubKey(), ca.Key, leafTemplate, ca.Cert.Certificate)
 	if err != nil {
 		return nil, err
 	}
@@ -370,16 +364,6 @@ func (ca *FullCertificateAuthority) RestChainRaw() [][]byte {
 }
 
 // Sign signs the passed certificate with ca certificate
-func (ca *FullCertificateAuthority) Sign(cert *x509.Certificate) (*x509.Certificate, error) {
-	signedCertBytes, err := x509.CreateCertificate(rand.Reader, cert, ca.Cert, cert.PublicKey, ca.Key)
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	signedCert, err := x509.ParseCertificate(signedCertBytes)
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	return signedCert, nil
+func (ca *FullCertificateAuthority) Sign(certTemplate *peertls.Certificate) (*peertls.Certificate, error) {
+	return peertls.CreateCertificate(certTemplate.PubKey(), ca.Key, certTemplate.Certificate, ca.Cert.Certificate)
 }

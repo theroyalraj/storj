@@ -4,7 +4,6 @@
 package identity
 
 import (
-	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
@@ -42,7 +41,7 @@ type encodedChain struct {
 }
 
 // DecodeAndParseChainPEM parses a PEM chain
-func DecodeAndParseChainPEM(PEMBytes []byte) ([]*x509.Certificate, error) {
+func DecodeAndParseChainPEM(PEMBytes []byte) ([]*peertls.Certificate, error) {
 	var (
 		encChain  encodedChain
 		blockErrs utils.ErrorGroup
@@ -54,9 +53,9 @@ func DecodeAndParseChainPEM(PEMBytes []byte) ([]*x509.Certificate, error) {
 			break
 		}
 		switch pemBlock.Type {
-		case peertls.BlockTypeCertificate:
+		case peertls.PEMLabelCertificate:
 			encChain.AddCert(pemBlock.Bytes)
-		case peertls.BlockTypeExtension:
+		case peertls.PEMLabelExtension:
 			if err := encChain.AddExtension(pemBlock.Bytes); err != nil {
 				blockErrs.Add(err)
 			}
@@ -167,7 +166,7 @@ func (e *encodedChain) AddExtension(b []byte) error {
 	return nil
 }
 
-func (e *encodedChain) Parse() ([]*x509.Certificate, error) {
+func (e *encodedChain) Parse() ([]*peertls.Certificate, error) {
 	chain, err := ParseCertChain(e.chain)
 	if err != nil {
 		return nil, err

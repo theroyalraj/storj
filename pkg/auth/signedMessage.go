@@ -4,11 +4,7 @@
 package auth
 
 import (
-	"crypto/ecdsa"
-	"crypto/x509"
-
 	"github.com/gogo/protobuf/proto"
-	"github.com/gtank/cryptopasta"
 	"github.com/zeebo/errs"
 
 	"storj.io/storj/pkg/identity"
@@ -63,11 +59,7 @@ func SignMessage(msg SignableMessage, ID identity.FullIdentity) error {
 	if err != nil {
 		return ErrMarshal.Wrap(err)
 	}
-	privECDSA, ok := ID.Key.(*ecdsa.PrivateKey)
-	if !ok {
-		return ErrECDSA
-	}
-	signature, err := cryptopasta.Sign(msgBytes, privECDSA)
+	signature, err := ID.Key.SignMsg(msgBytes)
 	if err != nil {
 		return ErrSign.Wrap(err)
 	}
@@ -86,7 +78,7 @@ func VerifyMsg(msg SignableMessage, signer storj.NodeID) error {
 	} else if msg.GetCerts() == nil {
 		return ErrMissing.New("message certificates")
 	}
-	signature := msg.GetSignature()
+	signatureBytes := msg.GetSignature()
 	certs := msg.GetCerts()
 	msg.SetSignature(nil)
 	msg.SetCerts(nil)
@@ -102,39 +94,32 @@ func VerifyMsg(msg SignableMessage, signer storj.NodeID) error {
 	if err != nil {
 		return ErrVerify.Wrap(err)
 	}
-	leafPubKey, err := parseECDSA(certs[0])
+	leafPubKey, err := getPublicKeyFromCertBytes(certs[0])
 	if err != nil {
 		return err
 	}
-	caPubKey, err := parseECDSA(certs[1])
+	caPubKey, err := getPublicKeyFromCertBytes(certs[1])
 	if err != nil {
 		return err
 	}
 	// verify signature
-	signatureLength := leafPubKey.Curve.Params().P.BitLen() / 8
-	if len(signature) < signatureLength {
-		return ErrSigLen.New("%d vs %d", len(signature), signatureLength)
-	}
-	if id, err := identity.NodeIDFromECDSAKey(caPubKey); err != nil || id != signer {
-		return ErrSigner.New("%+v vs %+v", id, signer)
-	}
-	if ok := cryptopasta.Verify(msgBytes, signature, leafPubKey); !ok {
+	if ok := leafPubKey.VerifyMsg(msgBytes, signatureBytes); !ok {
 		return ErrVerify.New("%+v", ok)
 	}
+	// verify ID
+	if id, err := identity.NodeIDFromKey(caPubKey); err != nil || id != signer {
+		return ErrSigner.New("%+v vs %+v", id, signer)
+	}
 	//cleanup
-	msg.SetSignature(signature)
+	msg.SetSignature(signatureBytes)
 	msg.SetCerts(certs)
 	return nil
 }
 
-func parseECDSA(rawCert []byte) (*ecdsa.PublicKey, error) {
-	cert, err := x509.ParseCertificate(rawCert)
+func getPublicKeyFromCertBytes(rawCert []byte) (peertls.PublicKey, error) {
+	cert, err := peertls.LoadCertificateFromBytes(rawCert)
 	if err != nil {
-		return nil, ErrVerify.Wrap(err)
+		return nil, err
 	}
-	ecdsa, ok := cert.PublicKey.(*ecdsa.PublicKey)
-	if !ok {
-		return nil, ErrECDSA
-	}
-	return ecdsa, nil
+	return cert.PubKey(), nil
 }

@@ -4,8 +4,6 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/x509"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -16,6 +14,7 @@ import (
 
 	"storj.io/storj/pkg/cfgstruct"
 	"storj.io/storj/pkg/identity"
+	"storj.io/storj/pkg/peertls"
 	"storj.io/storj/pkg/process"
 	"storj.io/storj/pkg/storj"
 )
@@ -48,8 +47,8 @@ func cmdKeyGenerate(cmd *cobra.Command, args []string) (err error) {
 	}
 	counter := new(uint32)
 	return identity.GenerateKeys(ctx, uint16(keyCfg.MinDifficulty), keyCfg.Concurrency,
-		func(k *ecdsa.PrivateKey, id storj.NodeID) (done bool, err error) {
-			data, err := x509.MarshalECPrivateKey(k)
+		func(k peertls.PrivateKey, id storj.NodeID) (done bool, err error) {
+			data, err := k.MarshalToDER()
 			if err != nil {
 				return false, err
 			}
