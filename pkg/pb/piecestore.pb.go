@@ -67,6 +67,7 @@ type PayerBandwidthAllocation struct {
 	CreatedUnixSec       int64           `protobuf:"varint,7,opt,name=created_unix_sec,json=createdUnixSec,proto3" json:"created_unix_sec,omitempty"`
 	Certs                [][]byte        `protobuf:"bytes,8,rep,name=certs,proto3" json:"certs,omitempty"`
 	Signature            []byte          `protobuf:"bytes,9,opt,name=signature,proto3" json:"signature,omitempty"`
+	StorageNodeIds       []NodeID        `protobuf:"bytes,10,rep,name=storage_node_ids,json=storageNodeIds,proto3,customtype=NodeID" json:"storage_node_ids"`
 	XXX_NoUnkeyedLiteral struct{}        `json:"-"`
 	XXX_unrecognized     []byte          `json:"-"`
 	XXX_sizecache        int32           `json:"-"`
