@@ -190,6 +190,33 @@ func TestHappyPath(t *testing.T) {
 		}
 	})
 
+	bandwidthAllocation := func(serialnum, signature, status string, satelliteID storj.NodeID, total int64) *pb.Order {
+		return &pb.Order{
+			PayerAllocation: pb.OrderLimit{SatelliteId: satelliteID},
+			Total:           total,
+			Signature:       []byte(signature),
+		}
+	}
+
+	//TODO: use better data
+	nodeIDAB := teststorj.NodeIDFromString("AB")
+	allocationTests := []*pb.Order{
+		bandwidthAllocation("serialnum_1", "signed by test", "SENT", nodeIDAB, 0),
+		bandwidthAllocation("serialnum_2", "signed by sigma", "UNSENT", nodeIDAB, 10),
+		bandwidthAllocation("serialnum_3", "signed by sigma", "REJECT", nodeIDAB, 98),
+		bandwidthAllocation("serialnum_4", "signed by test", "SENT", nodeIDAB, 3),
+	}
+
+	type bwUsage struct {
+		size    int64
+		timenow time.Time
+	}
+
+	bwtests := []bwUsage{
+		// size is total size stored
+		{size: 1110, timenow: time.Now()},
+	}
+
 	t.Run("Bandwidth Allocation", func(t *testing.T) {
 		for P := 0; P < concurrency; P++ {
 			t.Run("#"+strconv.Itoa(P), func(t *testing.T) {

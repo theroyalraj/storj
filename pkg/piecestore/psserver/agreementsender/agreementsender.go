@@ -50,8 +50,14 @@ func (as *AgreementSender) Run(ctx context.Context) error {
 			as.log.Error("Agreementsender could not retrieve bandwidth allocations", zap.Error(err))
 			continue
 		}
+		// send agreement payouts
 		for satellite, agreements := range agreementGroups {
 			as.SendAgreementsToSatellite(ctx, satellite, agreements)
+		}
+
+		// Delete older payout irrespective of its status
+		if err = as.DB.DeleteBandwidthAllocationPayouts(); err != nil {
+			as.log.Error("Agreementsender failed to delete bandwidth allocation", zap.Error(err))
 		}
 		select {
 		case <-ticker.C:
@@ -92,18 +98,11 @@ func (as *AgreementSender) SendAgreementsToSatellite(ctx context.Context, satID 
 			as.log.Warn("Agreementsender failed to deserialize agreement : will delete", zap.Error(err))
 		} else {
 			// Send agreement to satellite
-			r, err := client.BandwidthAgreements(ctx, &rba)
-			if err != nil || r.GetStatus() == pb.AgreementsSummary_FAIL {
-				as.log.Warn("Agreementsender failed to send agreement to satellite : will retry", zap.Error(err))
-				continue
-			} else if r.GetStatus() == pb.AgreementsSummary_REJECTED {
-				//todo: something better than a delete here?
-				as.log.Error("Agreementsender had agreement explicitly rejected by satellite : will delete", zap.Error(err))
-			}
-		}
-		// Delete from PSDB by signature
-		if err = as.DB.DeleteBandwidthAllocationBySerialnum(rba.PayerAllocation.SerialNumber); err != nil {
-			as.log.Error("Agreementsender failed to delete bandwidth allocation", zap.Error(err))
+			r, _ := client.BandwidthAgreements(ctx, &rba)
+
+			// by default or after grpc connection unsuccess the status stays "UNSENT" and based
+			// on received status from satellite, either status updated to "REJECT" or "SENT"
+			_ = as.DB.UpdateBandwidthAllocationStatus(rba.PayerAllocation.SerialNumber, r.GetStatus())
 		}
 	}
 }
