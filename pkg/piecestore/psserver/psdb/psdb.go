@@ -273,7 +273,6 @@ func (db *DB) DeleteBandwidthAllocationPayouts() error {
 // UpdateBandwidthAllocationStatus update the bwa payout status
 func (db *DB) UpdateBandwidthAllocationStatus(serialnum string, status pb.AgreementsSummary_Status) (err error) {
 	defer db.locked()()
-	fmt.Printf("status = %+v\n", status)
 
 	switch status {
 	case pb.AgreementsSummary_FAIL:
