@@ -94,15 +94,29 @@ func (as *AgreementSender) SendAgreementsToSatellite(ctx context.Context, satID 
 	//todo:  stop sending these one-by-one, send all at once
 	for _, agreement := range agreements {
 		rba := agreement.Agreement
+		// Send agreement to satellite
+		sat, err := client.BandwidthAgreements(ctx, &rba)
 		if err != nil {
-			as.log.Warn("Agreementsender failed to deserialize agreement : will delete", zap.Error(err))
+			switch sat.GetStatus() {
+			case pb.AgreementsSummary_FAIL:
+				// CASE FAILED: connection with sat couldnt be established or connection
+				// is established but lost before receiving response from satellite
+				// no updates to the bwa status is done, so it remains "UNSENT"
+				as.log.Warn("Agreementsender lost connection", zap.Error(err))
+			default:
+				// CASE REJECTED: successful connection with sat established but either failed or rejected received
+				zap.S().Warnf("Agreementsender had agreement explicitly rejected/failed by satellite")
+				err = as.DB.UpdateBandwidthAllocationStatus(rba.PayerAllocation.SerialNumber, psdb.BwaStatusREJECT)
+				if err != nil {
+					as.log.Warn("Agreementsender err", zap.Error(err))
+				}
+			}
 		} else {
-			// Send agreement to satellite
-			r, _ := client.BandwidthAgreements(ctx, &rba)
-
-			// by default or after grpc connection unsuccess the status stays "UNSENT" and based
-			// on received status from satellite, either status updated to "REJECT" or "SENT"
-			_ = as.DB.UpdateBandwidthAllocationStatus(rba.PayerAllocation.SerialNumber, r.GetStatus())
+			// updates the status to "SENT"
+			err = as.DB.UpdateBandwidthAllocationStatus(rba.PayerAllocation.SerialNumber, psdb.BwaStatusSENT)
+			if err != nil {
+				as.log.Warn("Agreementsender err", zap.Error(err))
+			}
 		}
 	}
 }

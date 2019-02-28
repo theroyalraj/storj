@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bmizerany/assert"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 
@@ -68,9 +68,9 @@ func TestHappyPath(t *testing.T) {
 		{ID: "test", Expiration: 666},
 	}
 
-	bandwidthAllocation := func(signature string, satelliteID storj.NodeID, total int64) *pb.Order {
+	bandwidthAllocation := func(serialnum, signature string, satelliteID storj.NodeID, total int64) *pb.Order {
 		return &pb.Order{
-			PayerAllocation: pb.OrderLimit{SatelliteId: satelliteID},
+			PayerAllocation: pb.OrderLimit{SatelliteId: satelliteID, SerialNumber: serialnum},
 			Total:           total,
 			Signature:       []byte(signature),
 		}
@@ -79,10 +79,10 @@ func TestHappyPath(t *testing.T) {
 	//TODO: use better data
 	nodeIDAB := teststorj.NodeIDFromString("AB")
 	allocationTests := []*pb.Order{
-		bandwidthAllocation("signed by test", nodeIDAB, 0),
-		bandwidthAllocation("signed by sigma", nodeIDAB, 10),
-		bandwidthAllocation("signed by sigma", nodeIDAB, 98),
-		bandwidthAllocation("signed by test", nodeIDAB, 3),
+		bandwidthAllocation("serialnum_1", "signed by test", nodeIDAB, 0),
+		bandwidthAllocation("serialnum_2", "signed by sigma", nodeIDAB, 10),
+		bandwidthAllocation("serialnum_3", "signed by sigma", nodeIDAB, 98),
+		bandwidthAllocation("serialnum_4", "signed by test", nodeIDAB, 3),
 	}
 
 	type bwUsage struct {
@@ -191,33 +191,6 @@ func TestHappyPath(t *testing.T) {
 		}
 	})
 
-	bandwidthAllocation := func(serialnum, signature string, satelliteID storj.NodeID, total int64) *pb.Order {
-		return &pb.Order{
-			PayerAllocation: pb.OrderLimit{SatelliteId: satelliteID, SerialNumber: serialnum},
-			Total:           total,
-			Signature:       []byte(signature),
-		}
-	}
-
-	//TODO: use better data
-	nodeIDAB := teststorj.NodeIDFromString("AB")
-	allocationTests := []*pb.Order{
-		bandwidthAllocation("serialnum_1", "signed by test", nodeIDAB, 0),
-		bandwidthAllocation("serialnum_2", "signed by sigma", nodeIDAB, 10),
-		bandwidthAllocation("serialnum_3", "signed by sigma", nodeIDAB, 98),
-		bandwidthAllocation("serialnum_4", "signed by test", nodeIDAB, 3),
-	}
-
-	type bwUsage struct {
-		size    int64
-		timenow time.Time
-	}
-
-	bwtests := []bwUsage{
-		// size is total size stored
-		{size: 1110, timenow: time.Now()},
-	}
-
 	t.Run("Bandwidth Allocation", func(t *testing.T) {
 		for P := 0; P < concurrency; P++ {
 			t.Run("#"+strconv.Itoa(P), func(t *testing.T) {
@@ -314,16 +287,15 @@ func TestHappyPath(t *testing.T) {
 
 	type bwaUsage struct {
 		serialnum string
-		setStatus pb.AgreementsSummary_Status
-		expStatus string
-		timenow   time.Time
+		setStatus psdb.BwaStatus
+		expStatus psdb.BwaStatus
 	}
 
 	bwatests := []bwaUsage{
 		// size is total size stored
-		{serialnum: "serialnum_1", setStatus: pb.AgreementsSummary_FAIL, expStatus: "REJECT", timenow: time.Now()},
-		{serialnum: "serialnum_2", setStatus: pb.AgreementsSummary_REJECTED, expStatus: "REJECT", timenow: time.Now()},
-		{serialnum: "serialnum_3", setStatus: pb.AgreementsSummary_OK, expStatus: "SENT", timenow: time.Now()},
+		{serialnum: "serialnum_1", setStatus: psdb.BwaStatusUNSENT, expStatus: psdb.BwaStatusUNSENT},
+		{serialnum: "serialnum_2", setStatus: psdb.BwaStatusREJECT, expStatus: psdb.BwaStatusREJECT},
+		{serialnum: "serialnum_3", setStatus: psdb.BwaStatusSENT, expStatus: psdb.BwaStatusSENT},
 	}
 	t.Run("UpdateBandwidthAllocationStatus", func(t *testing.T) {
 		for P := 0; P < concurrency; P++ {
@@ -331,14 +303,9 @@ func TestHappyPath(t *testing.T) {
 				t.Parallel()
 				for _, bw := range bwatests {
 					err := db.UpdateBandwidthAllocationStatus(bw.serialnum, bw.setStatus)
-					if err != nil {
-						t.Fatal(err)
-					}
-					var status string
-					err = db.DB.QueryRow(`SELECT status FROM bandwidth_agreements WHERE serial_num=?`, bw.serialnum).Scan(&status)
-					if err != nil {
-						t.Fatal(err)
-					}
+					require.NoError(t, err)
+					status, err := db.GetBwaStatusBySerialNum(bw.serialnum)
+					require.NoError(t, err)
 					assert.Equal(t, bw.expStatus, status)
 				}
 			})

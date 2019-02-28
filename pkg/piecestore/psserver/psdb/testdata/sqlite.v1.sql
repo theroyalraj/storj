@@ -1,5 +1,5 @@
 CREATE TABLE `ttl` (`id` BLOB UNIQUE, `created` INT(10), `expires` INT(10), `size` INT(10));
-CREATE TABLE `bandwidth_agreements` (`satellite` BLOB, `agreement` BLOB, `signature` BLOB, `uplink` BLOB, `serial_num` BLOB, `total` INT(10), `max_size` INT(10), `created_utc_sec`	INT(10), `status` TEXT, `expiration_utc_sec` INT(10), `action` INT(10), `daystart_utc_sec` INT(10));
+CREATE TABLE `bandwidth_agreements` (`satellite` BLOB, `agreement` BLOB, `signature` BLOB, `uplink` BLOB, `serial_num` BLOB, `total` INT(10), `max_size` INT(10), `created_utc_sec`	INT(10), `status` INT(10) DEFAULT 0, `expiration_utc_sec` INT(10), `action` INT(10), `daystart_utc_sec` INT(10));
 CREATE INDEX idx_ttl_expires ON ttl (expires);
 INSERT INTO ttl VALUES(1,2,3,4);
 INSERT INTO bandwidth_agreements VALUES(
@@ -11,7 +11,7 @@ INSERT INTO bandwidth_agreements VALUES(
     2669568,
     0,
     1550666511,
-    "UNSENT",
+    0,
     1554554511,
     0,
     1550620800
